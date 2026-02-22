@@ -1,100 +1,212 @@
-import { useState, useCallback } from 'react';
-import { User, Message, Chat, Reaction } from '@/types/messenger';
+import { useState, useCallback, useEffect } from 'react';
+import { User, Message, Chat } from '@/types/messenger';
+import { api } from '@/api/client';
 
-const DEMO_USERS: User[] = [
-  { id: '2', name: 'Алиса Смирнова', phone: '+79161234567', tag: 'alice', avatar: '', status: 'online', tags: ['дизайн', 'музыка'], lastSeen: new Date() },
-  { id: '3', name: 'Максим Козлов', phone: '+79261234568', tag: 'maxkozlov', avatar: '', status: 'offline', tags: ['спорт', 'путешествия'], lastSeen: new Date(Date.now() - 3600000) },
-  { id: '4', name: 'Кира Волкова', phone: '+79361234569', tag: 'kiravolk', avatar: '', status: 'away', tags: ['кино', 'книги', 'дизайн'], lastSeen: new Date(Date.now() - 1800000) },
-  { id: '5', name: 'Денис Орлов', phone: '+79461234570', tag: 'denisorl', avatar: '', status: 'online', tags: ['tech', 'музыка'], lastSeen: new Date() },
-];
+interface ApiUser {
+  id: number;
+  name: string;
+  phone: string;
+  tag: string;
+  avatar_url?: string;
+  status: string;
+  last_seen: string;
+  interests: string[];
+}
 
-const DEMO_MESSAGES: Message[] = [
-  { id: 'm1', chatId: 'c1', senderId: '2', text: 'Привет! Как дела? 👋', timestamp: new Date(Date.now() - 3600000 * 2), reactions: [{ emoji: '❤️', userIds: ['1'] }], isRead: true },
-  { id: 'm2', chatId: 'c1', senderId: '1', text: 'Всё отлично! Работаю над новым проектом 🚀', timestamp: new Date(Date.now() - 3600000), reactions: [], isRead: true },
-  { id: 'm3', chatId: 'c1', senderId: '2', text: 'Звучит круто! Расскажи подробнее', timestamp: new Date(Date.now() - 1800000), reactions: [{ emoji: '🔥', userIds: ['1', '2'] }], isRead: true },
-  { id: 'm4', chatId: 'c1', senderId: '1', text: 'Строю мессенджер 😄', timestamp: new Date(Date.now() - 900000), reactions: [], isRead: true },
-  { id: 'm5', chatId: 'c1', senderId: '2', sticker: '😍', timestamp: new Date(Date.now() - 600000), reactions: [], isRead: false },
-  { id: 'm6', chatId: 'c2', senderId: '3', text: 'Привет! Ты как?', timestamp: new Date(Date.now() - 7200000), reactions: [], isRead: true },
-  { id: 'm7', chatId: 'c2', senderId: '1', text: 'Отлично, спасибо!', timestamp: new Date(Date.now() - 6000000), reactions: [{ emoji: '😊', userIds: ['3'] }], isRead: true },
-  { id: 'm8', chatId: 'c3', senderId: '4', text: 'Посмотри этот фильм обязательно!', timestamp: new Date(Date.now() - 86400000), reactions: [], isRead: false },
-  { id: 'm9', chatId: 'c4', senderId: '5', text: 'Слушал новый альбом?', timestamp: new Date(Date.now() - 172800000), reactions: [], isRead: false },
-];
+interface ApiMessage {
+  id: number;
+  sender_id: number;
+  text?: string;
+  sticker?: string;
+  is_read: boolean;
+  created_at: string;
+  reactions: { emoji: string; user_ids: number[] }[];
+}
 
-const DEMO_CHATS: Chat[] = [
-  { id: 'c1', participants: ['1', '2'], unreadCount: 1, isPinned: true, lastMessage: DEMO_MESSAGES[4] },
-  { id: 'c2', participants: ['1', '3'], unreadCount: 0, isPinned: false, lastMessage: DEMO_MESSAGES[6] },
-  { id: 'c3', participants: ['1', '4'], unreadCount: 1, isPinned: false, lastMessage: DEMO_MESSAGES[7] },
-  { id: 'c4', participants: ['1', '5'], unreadCount: 1, isPinned: false, lastMessage: DEMO_MESSAGES[8] },
-];
+interface ApiChat {
+  id: number;
+  is_pinned: boolean;
+  unread_count: number;
+  other_user: ApiUser;
+  last_message?: ApiMessage;
+}
+
+function mapUser(u: ApiUser): User {
+  return {
+    id: String(u.id),
+    name: u.name,
+    phone: u.phone,
+    tag: u.tag,
+    avatar: u.avatar_url || '',
+    status: (u.status as 'online' | 'offline' | 'away') || 'offline',
+    lastSeen: new Date(u.last_seen),
+    tags: u.interests || [],
+  };
+}
+
+function mapMessage(m: ApiMessage, chatId: string): Message {
+  return {
+    id: String(m.id),
+    chatId,
+    senderId: String(m.sender_id),
+    text: m.text,
+    sticker: m.sticker,
+    timestamp: new Date(m.created_at),
+    reactions: m.reactions?.map(r => ({ emoji: r.emoji, userIds: r.user_ids.map(String) })) || [],
+    isRead: m.is_read,
+  };
+}
+
+function mapChat(c: ApiChat): Chat {
+  const lastMsg = c.last_message ? mapMessage(c.last_message, String(c.id)) : undefined;
+  return {
+    id: String(c.id),
+    participants: [],
+    unreadCount: c.unread_count,
+    isPinned: c.is_pinned,
+    lastMessage: lastMsg,
+  };
+}
 
 export function useMessengerStore() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [users] = useState<User[]>(DEMO_USERS);
-  const [messages, setMessages] = useState<Message[]>(DEMO_MESSAGES);
-  const [chats] = useState<Chat[]>(DEMO_CHATS);
+  const [users, setUsers] = useState<User[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [chatUserMap, setChatUserMap] = useState<Record<string, User>>({});
+  const [loading, setLoading] = useState(true);
 
-  const login = useCallback((phone: string, password: string): User | null => {
-    if (phone === '+79001234567' && password === '12345') {
-      const user: User = { id: '1', name: 'Вы', phone, tag: 'me', avatar: '', status: 'online', tags: ['react', 'дизайн'], lastSeen: new Date() };
-      setCurrentUser(user);
-      return user;
+  const loadChats = useCallback(async () => {
+    try {
+      const res = await api.getChats();
+      const mapped = res.chats.map((c: ApiChat) => mapChat(c));
+      setChats(mapped);
+      const userMap: Record<string, User> = {};
+      res.chats.forEach((c: ApiChat) => {
+        userMap[String(c.id)] = mapUser(c.other_user);
+      });
+      setChatUserMap(userMap);
+    } catch {
+      /* ignore */
+    } finally {
+      setLoading(false);
     }
-    return null;
   }, []);
 
-  const register = useCallback((name: string, phone: string, password: string, tag: string, avatar?: string): User => {
-    const user: User = { id: '1', name, phone, tag, avatar: avatar || '', status: 'online', tags: [], lastSeen: new Date() };
-    setCurrentUser(user);
-    return user;
+  useEffect(() => {
+    const token = localStorage.getItem('messenger_token');
+    if (!token) { setLoading(false); return; }
+    api.getMe().then(res => {
+      setCurrentUser(mapUser(res.user));
+      loadChats();
+    }).catch(() => {
+      localStorage.removeItem('messenger_token');
+      setLoading(false);
+    });
+  }, [loadChats]);
+
+  const login = useCallback(async (phone: string, password: string): Promise<User | null> => {
+    try {
+      const res = await api.login(phone, password);
+      localStorage.setItem('messenger_token', res.token);
+      const u = mapUser(res.user);
+      setCurrentUser(u);
+      await loadChats();
+      return u;
+    } catch {
+      return null;
+    }
+  }, [loadChats]);
+
+  const register = useCallback(async (name: string, phone: string, password: string, tag: string, avatar?: string): Promise<User> => {
+    const res = await api.register(name, phone, password, tag, avatar);
+    localStorage.setItem('messenger_token', res.token);
+    const u = mapUser(res.user);
+    setCurrentUser(u);
+    setChats([]);
+    return u;
   }, []);
 
-  const logout = useCallback(() => setCurrentUser(null), []);
+  const logout = useCallback(async () => {
+    try { await api.logout(); } catch { /* ignore */ }
+    localStorage.removeItem('messenger_token');
+    setCurrentUser(null);
+    setChats([]);
+    setMessages([]);
+    setChatUserMap({});
+  }, []);
 
-  const sendMessage = useCallback((chatId: string, text?: string, sticker?: string) => {
+  const sendMessage = useCallback(async (chatId: string, text?: string, sticker?: string) => {
     if (!currentUser) return;
-    const msg: Message = {
-      id: `m${Date.now()}`,
-      chatId,
-      senderId: currentUser.id,
-      text,
-      sticker,
-      timestamp: new Date(),
-      reactions: [],
-      isRead: false,
-    };
+    const res = await api.sendMessage(Number(chatId), text, sticker);
+    const msg = mapMessage(res.message, chatId);
     setMessages(prev => [...prev, msg]);
+    setChats(prev => prev.map(c => c.id === chatId ? { ...c, lastMessage: msg } : c));
   }, [currentUser]);
 
-  const addReaction = useCallback((messageId: string, emoji: string) => {
+  const addReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!currentUser) return;
-    setMessages(prev => prev.map(msg => {
-      if (msg.id !== messageId) return msg;
-      const existing = msg.reactions.find(r => r.emoji === emoji);
-      if (existing) {
-        const hasMe = existing.userIds.includes(currentUser.id);
-        return {
-          ...msg,
-          reactions: hasMe
-            ? msg.reactions.map(r => r.emoji === emoji ? { ...r, userIds: r.userIds.filter(id => id !== currentUser.id) } : r).filter(r => r.userIds.length > 0)
-            : msg.reactions.map(r => r.emoji === emoji ? { ...r, userIds: [...r.userIds, currentUser.id] } : r)
-        };
-      }
-      return { ...msg, reactions: [...msg.reactions, { emoji, userIds: [currentUser.id] }] };
-    }));
+    try {
+      const res = await api.reactToMessage(Number(messageId), emoji);
+      const newReactions = res.reactions.map((r: { emoji: string; user_ids: number[] }) => ({
+        emoji: r.emoji,
+        userIds: r.user_ids.map(String),
+      }));
+      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: newReactions } : m));
+    } catch { /* ignore */ }
   }, [currentUser]);
+
+  const loadMessages = useCallback(async (chatId: string) => {
+    const res = await api.getMessages(Number(chatId));
+    const msgs = res.messages.map((m: ApiMessage) => mapMessage(m, chatId));
+    setMessages(prev => {
+      const other = prev.filter(m => m.chatId !== chatId);
+      return [...other, ...msgs];
+    });
+    await api.markRead(Number(chatId));
+    setChats(prev => prev.map(c => c.id === chatId ? { ...c, unreadCount: 0 } : c));
+  }, []);
+
+  const searchUsers = useCallback(async (q: string, interests: string[]): Promise<User[]> => {
+    const res = await api.searchUsers(q, interests);
+    const mapped: User[] = res.users.map(mapUser);
+    setUsers(mapped);
+    return mapped;
+  }, []);
+
+  const openChatWith = useCallback(async (user: User): Promise<string> => {
+    const res = await api.createChat(Number(user.id));
+    const chatId = String(res.chat_id);
+    setChats(prev => {
+      if (prev.find(c => c.id === chatId)) return prev;
+      const newChat: Chat = { id: chatId, participants: [], unreadCount: 0, isPinned: false };
+      return [newChat, ...prev];
+    });
+    setChatUserMap(prev => ({ ...prev, [chatId]: user }));
+    return chatId;
+  }, []);
+
+  const checkPhone = useCallback(async (phone: string): Promise<boolean> => {
+    const res = await api.checkPhone(phone);
+    return res.exists;
+  }, []);
 
   const getChatMessages = useCallback((chatId: string) => {
     return messages.filter(m => m.chatId === chatId);
   }, [messages]);
 
   const getOtherUser = useCallback((chat: Chat): User | undefined => {
-    if (!currentUser) return undefined;
-    const otherId = chat.participants.find(p => p !== currentUser.id);
-    return users.find(u => u.id === otherId);
-  }, [currentUser, users]);
+    return chatUserMap[chat.id];
+  }, [chatUserMap]);
 
-  const updateProfile = useCallback((updates: Partial<User>) => {
-    setCurrentUser(prev => prev ? { ...prev, ...updates } : prev);
+  const updateProfile = useCallback(async (updates: Partial<User>) => {
+    const apiUpdates: Record<string, unknown> = {};
+    if (updates.name) apiUpdates.name = updates.name;
+    if (updates.tag) apiUpdates.tag = updates.tag;
+    if (updates.avatar !== undefined) apiUpdates.avatar_url = updates.avatar;
+    if (updates.tags) apiUpdates.interests = updates.tags;
+    const res = await api.updateProfile(apiUpdates);
+    setCurrentUser(mapUser(res.user));
   }, []);
 
   const formatLastSeen = useCallback((user: User): string => {
@@ -110,5 +222,10 @@ export function useMessengerStore() {
     return `был(а) ${days} дн. назад`;
   }, []);
 
-  return { currentUser, users, messages, chats, login, register, logout, sendMessage, addReaction, getChatMessages, getOtherUser, updateProfile, formatLastSeen };
+  return {
+    currentUser, users, messages, chats, loading,
+    login, register, logout, sendMessage, addReaction,
+    getChatMessages, getOtherUser, updateProfile, formatLastSeen,
+    loadMessages, searchUsers, openChatWith, checkPhone, loadChats,
+  };
 }

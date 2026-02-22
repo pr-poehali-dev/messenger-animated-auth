@@ -1,0 +1,31 @@
+{
+  "tests": [
+    {
+      "name": "Check phone not exists",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "check_phone", "phone": "+79999999999"},
+      "expectedStatus": 200,
+      "expectedBody": {"exists": false},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Register new user",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "register", "name": "Тест Юзер", "phone": "+79001112233", "tag": "testuser42", "password": "test1234"},
+      "expectedStatus": 200,
+      "expectedBody": {"token": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Login user",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "login", "phone": "+79001112233", "password": "test1234"},
+      "expectedStatus": 200,
+      "expectedBody": {"token": "string"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}

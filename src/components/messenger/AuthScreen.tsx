@@ -3,13 +3,12 @@ import { AuthStep } from '@/types/messenger';
 import Icon from '@/components/ui/icon';
 
 interface Props {
-  onLogin: (phone: string, password: string) => boolean;
-  onRegister: (name: string, phone: string, password: string, tag: string, avatar?: string) => void;
+  onLogin: (phone: string, password: string) => Promise<boolean>;
+  onRegister: (name: string, phone: string, password: string, tag: string, avatar?: string) => Promise<void>;
+  onCheckPhone: (phone: string) => Promise<boolean>;
 }
 
-const KNOWN_PHONES = ['+79001234567'];
-
-export default function AuthScreen({ onLogin, onRegister }: Props) {
+export default function AuthScreen({ onLogin, onRegister, onCheckPhone }: Props) {
   const [step, setStep] = useState<AuthStep>('phone');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
@@ -20,6 +19,7 @@ export default function AuthScreen({ onLogin, onRegister }: Props) {
   const [error, setError] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [animKey, setAnimKey] = useState(0);
+  const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const formatPhone = (v: string) => {
@@ -44,23 +44,44 @@ export default function AuthScreen({ onLogin, onRegister }: Props) {
     setError('');
   };
 
-  const handlePhoneSubmit = () => {
+  const handlePhoneSubmit = async () => {
     const rp = rawPhone(phone);
     if (rp.length < 12) { setError('Введите корректный номер'); return; }
-    if (KNOWN_PHONES.includes(rp)) goNext('password');
-    else goNext('register');
+    setBusy(true);
+    try {
+      const exists = await onCheckPhone(rp);
+      goNext(exists ? 'password' : 'register');
+    } catch {
+      setError('Ошибка сети, попробуйте ещё раз');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const handleLogin = () => {
-    const ok = onLogin(rawPhone(phone), password);
-    if (!ok) setError('Неверный пароль');
+  const handleLogin = async () => {
+    setBusy(true);
+    try {
+      const ok = await onLogin(rawPhone(phone), password);
+      if (!ok) setError('Неверный пароль');
+    } catch {
+      setError('Ошибка сети');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!name.trim()) { setError('Введите имя'); return; }
     if (!tag.trim()) { setError('Введите тег'); return; }
     if (regPassword.length < 4) { setError('Пароль не менее 4 символов'); return; }
-    onRegister(name, rawPhone(phone), regPassword, tag.replace('@', ''), avatar);
+    setBusy(true);
+    try {
+      await onRegister(name, rawPhone(phone), regPassword, tag.replace('@', ''), avatar);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Ошибка регистрации');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleAvatar = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -73,7 +94,6 @@ export default function AuthScreen({ onLogin, onRegister }: Props) {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Фоновые шары */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-32 -left-32 w-80 h-80 rounded-full opacity-20 blur-3xl animate-float" style={{ background: 'radial-gradient(circle, #7c3aed, transparent)' }} />
         <div className="absolute -bottom-32 -right-32 w-96 h-96 rounded-full opacity-20 blur-3xl animate-float" style={{ background: 'radial-gradient(circle, #ec4899, transparent)', animationDelay: '1s' }} />
@@ -81,7 +101,6 @@ export default function AuthScreen({ onLogin, onRegister }: Props) {
       </div>
 
       <div key={animKey} className="glass-card p-8 w-full max-w-sm animate-scale-in relative z-10">
-        {/* Логотип */}
         <div className="text-center mb-8">
           <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center text-3xl animate-float" style={{ background: 'var(--grad-1)' }}>
             💬
@@ -98,35 +117,32 @@ export default function AuthScreen({ onLogin, onRegister }: Props) {
           </p>
         </div>
 
-        {/* Phone step */}
         {step === 'phone' && (
           <div className="space-y-4 animate-fade-in">
-            <input className="input-field text-center text-lg tracking-wider" placeholder="+7 (___) ___-__-__" value={phone} onChange={e => setPhone(formatPhone(e.target.value))} onKeyDown={e => e.key === 'Enter' && handlePhoneSubmit()} maxLength={18} />
+            <input className="input-field text-center text-lg tracking-wider" placeholder="+7 (___) ___-__-__" value={phone} onChange={e => setPhone(formatPhone(e.target.value))} onKeyDown={e => e.key === 'Enter' && !busy && handlePhoneSubmit()} maxLength={18} />
             {error && <p className="text-red-400 text-sm text-center animate-fade-in">{error}</p>}
-            <button className="gradient-btn w-full" onClick={handlePhoneSubmit}>Продолжить</button>
-            <p className="text-center text-xs text-muted-foreground">Демо: +7 900 123-45-67 / пароль: 12345</p>
+            <button className="gradient-btn w-full" onClick={handlePhoneSubmit} disabled={busy}>
+              {busy ? 'Проверяем...' : 'Продолжить'}
+            </button>
           </div>
         )}
 
-        {/* Password step */}
         {step === 'password' && (
           <div className="space-y-4 animate-fade-in">
             <div className="relative">
-              <input className="input-field pr-12" type={showPass ? 'text' : 'password'} placeholder="Пароль" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleLogin()} />
+              <input className="input-field pr-12" type={showPass ? 'text' : 'password'} placeholder="Пароль" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && !busy && handleLogin()} />
               <button className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors" onClick={() => setShowPass(!showPass)}>
                 <Icon name={showPass ? 'EyeOff' : 'Eye'} size={18} />
               </button>
             </div>
             {error && <p className="text-red-400 text-sm text-center animate-fade-in">{error}</p>}
-            <button className="gradient-btn w-full" onClick={handleLogin}>Войти</button>
+            <button className="gradient-btn w-full" onClick={handleLogin} disabled={busy}>{busy ? 'Входим...' : 'Войти'}</button>
             <button className="w-full text-muted-foreground text-sm hover:text-foreground transition-colors" onClick={() => goNext('phone')}>← Назад</button>
           </div>
         )}
 
-        {/* Register step */}
         {step === 'register' && (
           <div className="space-y-4 animate-fade-in">
-            {/* Аватар */}
             <div className="flex justify-center">
               <button onClick={() => fileRef.current?.click()} className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-dashed border-violet-500/50 flex items-center justify-center hover:border-violet-500 transition-colors group relative">
                 {avatar ? (
@@ -152,7 +168,7 @@ export default function AuthScreen({ onLogin, onRegister }: Props) {
               </button>
             </div>
             {error && <p className="text-red-400 text-sm text-center animate-fade-in">{error}</p>}
-            <button className="gradient-btn w-full" onClick={handleRegister}>Создать аккаунт</button>
+            <button className="gradient-btn w-full" onClick={handleRegister} disabled={busy}>{busy ? 'Создаём...' : 'Создать аккаунт'}</button>
             <button className="w-full text-muted-foreground text-sm hover:text-foreground transition-colors" onClick={() => goNext('phone')}>← Назад</button>
           </div>
         )}

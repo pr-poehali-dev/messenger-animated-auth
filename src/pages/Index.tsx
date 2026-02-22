@@ -17,15 +17,27 @@ export default function Index() {
 
   const unreadTotal = store.chats.reduce((sum, c) => sum + c.unreadCount, 0);
 
+  if (store.loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl animate-float" style={{ background: 'var(--grad-1)' }}>💬</div>
+          <div className="w-8 h-8 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
+        </div>
+      </div>
+    );
+  }
+
   if (!store.currentUser) {
     return (
       <AuthScreen
-        onLogin={(phone, password) => {
-          const user = store.login(phone, password);
+        onCheckPhone={store.checkPhone}
+        onLogin={async (phone, password) => {
+          const user = await store.login(phone, password);
           return !!user;
         }}
-        onRegister={(name, phone, password, tag, avatar) => {
-          store.register(name, phone, password, tag, avatar);
+        onRegister={async (name, phone, password, tag, avatar) => {
+          await store.register(name, phone, password, tag, avatar);
         }}
       />
     );
@@ -33,17 +45,14 @@ export default function Index() {
 
   const handleOpenChat = (chat: Chat) => {
     setOpenChat(chat);
+    setTab('chats');
   };
 
-  const handleStartChat = (user: User) => {
-    const existing = store.chats.find(c =>
-      c.participants.includes(store.currentUser!.id) &&
-      c.participants.includes(user.id)
-    );
-    if (existing) {
-      setOpenChat(existing);
-      setTab('chats');
-    }
+  const handleStartChat = async (user: User) => {
+    const chatId = await store.openChatWith(user);
+    const chat: Chat = store.chats.find(c => c.id === chatId) || { id: chatId, participants: [], unreadCount: 0, isPinned: false };
+    setOpenChat(chat);
+    setTab('chats');
   };
 
   const handleTabChange = (newTab: Tab) => {
@@ -66,6 +75,7 @@ export default function Index() {
               onBack={() => setOpenChat(null)}
               onSendMessage={(text, sticker) => store.sendMessage(openChat.id, text, sticker)}
               onAddReaction={(msgId, emoji) => store.addReaction(msgId, emoji)}
+              onLoad={() => store.loadMessages(openChat.id)}
               formatLastSeen={store.formatLastSeen}
             />
           );
@@ -82,10 +92,10 @@ export default function Index() {
             )}
             {tab === 'search' && (
               <SearchScreen
-                users={store.users}
                 currentUser={store.currentUser}
                 formatLastSeen={store.formatLastSeen}
                 onStartChat={handleStartChat}
+                onSearchUsers={store.searchUsers}
               />
             )}
             {tab === 'settings' && (

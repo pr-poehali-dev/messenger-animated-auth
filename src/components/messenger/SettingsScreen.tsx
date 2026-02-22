@@ -5,9 +5,9 @@ import Icon from '@/components/ui/icon';
 
 interface Props {
   currentUser: User;
-  onUpdateProfile: (updates: Partial<User>) => void;
-  onLogout: () => void;
-  onDeleteAccount: () => void;
+  onUpdateProfile: (updates: Partial<User>) => Promise<void>;
+  onLogout: () => Promise<void>;
+  onDeleteAccount: () => Promise<void>;
 }
 
 type SettingSection = null | 'name' | 'tag' | 'password' | 'delete' | 'tags';

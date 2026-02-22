@@ -12,8 +12,9 @@ interface Props {
   otherUser: User;
   messages: Message[];
   onBack: () => void;
-  onSendMessage: (text?: string, sticker?: string) => void;
-  onAddReaction: (messageId: string, emoji: string) => void;
+  onSendMessage: (text?: string, sticker?: string) => Promise<void>;
+  onAddReaction: (messageId: string, emoji: string) => Promise<void>;
+  onLoad: () => Promise<void>;
   formatLastSeen: (user: User) => string;
 }
 
@@ -80,26 +81,33 @@ function MessageBubble({ msg, isMe, onReact, currentUserId }: MsgProps) {
   );
 }
 
-export default function ChatScreen({ chat, currentUser, otherUser, messages, onBack, onSendMessage, onAddReaction, formatLastSeen }: Props) {
+export default function ChatScreen({ chat, currentUser, otherUser, messages, onBack, onSendMessage, onAddReaction, onLoad, formatLastSeen }: Props) {
   const [text, setText] = useState('');
   const [showStickers, setShowStickers] = useState(false);
+  const [loadingMsgs, setLoadingMsgs] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setLoadingMsgs(true);
+    onLoad().finally(() => setLoadingMsgs(false));
+  }, [chat.id]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const send = () => {
+  const send = async () => {
     if (!text.trim()) return;
-    onSendMessage(text.trim());
+    const t = text.trim();
     setText('');
     inputRef.current?.focus();
+    await onSendMessage(t);
   };
 
-  const sendSticker = (s: string) => {
-    onSendMessage(undefined, s);
+  const sendSticker = async (s: string) => {
     setShowStickers(false);
+    await onSendMessage(undefined, s);
   };
 
   return (
@@ -126,15 +134,26 @@ export default function ChatScreen({ chat, currentUser, otherUser, messages, onB
 
       {/* Сообщения */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-0.5" onClick={() => setShowStickers(false)}>
-        {messages.map(msg => (
-          <MessageBubble
-            key={msg.id}
-            msg={msg}
-            isMe={msg.senderId === currentUser.id}
-            onReact={emoji => onAddReaction(msg.id, emoji)}
-            currentUserId={currentUser.id}
-          />
-        ))}
+        {loadingMsgs ? (
+          <div className="flex justify-center items-center h-full">
+            <div className="w-8 h-8 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center">
+            <div className="text-5xl mb-3 animate-float">👋</div>
+            <p className="text-muted-foreground text-sm">Начни общение первым!</p>
+          </div>
+        ) : (
+          messages.map(msg => (
+            <MessageBubble
+              key={msg.id}
+              msg={msg}
+              isMe={msg.senderId === currentUser.id}
+              onReact={emoji => onAddReaction(msg.id, emoji)}
+              currentUserId={currentUser.id}
+            />
+          ))
+        )}
         <div ref={bottomRef} />
       </div>
 
